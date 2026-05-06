@@ -1,5 +1,6 @@
 import plotly.graph_objects as go
 import streamlit as st
+import numpy as np
 import pandas as pd
 import tensorflow as tf
 import dask.dataframe as dd
@@ -48,12 +49,23 @@ def obtener_recomendacion_dl(nombre, temporada):
     posicion = perfil_lesionado['Posicion_Principal']
     df_pool = df[(df['Posicion_Principal'] == posicion) & (df['Temporada'] == temporada)].copy().reset_index(drop=True)
     
+    # FILTRO DE CALIDAD: Solo buscamos sustitutos que metan al menos el 70% de los puntos del lesionado
+    umbral_puntos = perfil_lesionado['Puntos_PP'] * 0.7
+    df_pool = df_pool[df_pool['Puntos_PP'] >= umbral_puntos].copy().reset_index(drop=True)
+    
+    # Si después del filtro el jugador buscado ya no está (porque él mismo es el filtro), lo volvemos a añadir para que la red lo vea
+    if nombre not in df_pool['Jugador'].values:
+        fila_jugador = df[(df['Jugador'] == nombre) & (df['Temporada'] == temporada)]
+        df_pool = pd.concat([df_pool, fila_jugador], ignore_index=True)
+    
     # Atributos para la Red Neuronal
     features = ['Edad', 'Partidos_Jugados', 'Minutos_Jugados_PP', 'Puntos_PP', 'Asistencias_PP', 'Rebotes_Totales_PP']
     
     scaler = StandardScaler()
     X = scaler.fit_transform(df_pool[features])
-    
+    pesos = np.array([0.1, 1.0, 3.5, 10.0, 5.0, 5.0]) 
+    X = X * pesos
+
     input_dim = len(features)
     input_layer = Input(shape=(input_dim,))
     encoded = Dense(8, activation='relu')(input_layer)
@@ -67,7 +79,6 @@ def obtener_recomendacion_dl(nombre, temporada):
     
     # Entrenamiento
     autoencoder.fit(X, X, epochs=50, batch_size=16, verbose=0)
-    
     huellas_profundas = encoder.predict(X)
     
     # Calcular similitud
@@ -76,16 +87,12 @@ def obtener_recomendacion_dl(nombre, temporada):
     
     df_pool['Similitud'] = similitudes
 
-    # 1. Datos del lesionado
-    perfil_lesionado = df[(df['Jugador'] == nombre) & (df['Temporada'] == temporada)].iloc[0] # Asegúrate de tener esta línea
     minutos_lesionado = perfil_lesionado['Minutos_Jugados_PP']
     eficiencia_lesionado = perfil_lesionado['Porcentaje_Tiros_Efectivo']
     
-    # 2. Predicción de Puntos (con eFG%)
     factor_punteria = df_pool['Porcentaje_Tiros_Efectivo'] / eficiencia_lesionado
     df_pool['PTS_Predichos'] = (df_pool['Puntos_PP'] / df_pool['Minutos_Jugados_PP']) * minutos_lesionado * factor_punteria
     
-    # 3. Predicción de Asistencias y Rebotes (por Minutos)
     df_pool['AST_Predichas'] = (df_pool['Asistencias_PP'] / df_pool['Minutos_Jugados_PP']) * minutos_lesionado
     df_pool['REB_Predichos'] = (df_pool['Rebotes_Totales_PP'] / df_pool['Minutos_Jugados_PP']) * minutos_lesionado
     
@@ -97,16 +104,13 @@ def obtener_recomendacion_dl(nombre, temporada):
 
     
 
-# 5. EL BOTÓN QUE DISPARA LA TABLA
+# 5. BOTON
 if st.button("🚀 Buscar Sustituto Ideal"):
     with st.spinner('La Red Neuronal está analizando a los jugadores...'):
-        # Llamada a la función
         resultados = obtener_recomendacion_dl(nombre_jugador, temporada_seleccionada)
         
-        # Mostrar la tabla
         st.subheader(f"Top 5 Sustitutos para {nombre_jugador} en {temporada_seleccionada}")
         
-        # Definir qué columnas quieres ver en la tabla
         columnas_visibles = ['Jugador', 'Posicion_Principal', 'Puntos_PP', 'Asistencias_PP', 'Rebotes_Totales_PP', 'Rol']
         
         st.dataframe(resultados[columnas_visibles], use_container_width=True)
@@ -119,9 +123,7 @@ if st.button("🚀 Buscar Sustituto Ideal"):
     mejor_sustituto = resultados.iloc[0]
     nombre_sustituto = mejor_sustituto['Jugador']
 
-    # 2. AQUÍ pones el título con el emoji
     st.markdown(f"### 📊 Comparativa Visual: {nombre_jugador} vs {nombre_sustituto}")
-    # 1. Definimos los "Topes Reales" para que el gráfico sea proporcional
     limites_personalizados = {
         'Puntos_PP': 32.0,
         'Asistencias_PP': 15.0,
@@ -135,12 +137,10 @@ if st.button("🚀 Buscar Sustituto Ideal"):
     perfil_lesionado = df[(df['Jugador'] == nombre_jugador) & (df['Temporada'] == temporada_seleccionada)].iloc[0]
     mejor_sustituto = resultados.iloc[0]
 
-    # 3. Escalamos los valores para que "encajen" en el dibujo (de 0 a 1)
-    # Esto hace que 10 rebotes se vean igual de importantes que 24 minutos (ambos al 50% del eje)
     val_original_radar = [perfil_lesionado[cat] / limites_personalizados[cat] for cat in categories]
     val_sustituto_radar = [mejor_sustituto[cat] / limites_personalizados[cat] for cat in categories]
 
-    # 4. Creamos el gráfico
+    
     fig = go.Figure()
 
     fig.add_trace(go.Scatterpolar(
@@ -164,12 +164,12 @@ if st.button("🚀 Buscar Sustituto Ideal"):
         line_color='#ef553b'
     ))
 
-    # 5. Configuración estética
+    
     fig.update_layout(
         polar=dict(
             radialaxis=dict(
                 visible=True,
-                range=[0, 1], # El rango del dibujo es de 0 a 1 (0% a 100% del límite)
+                range=[0, 1],
                 tickvals=[0.25, 0.5, 0.75, 1],
                 ticktext=['25%', '50%', '75%', 'Límite Máx.'],
                 gridcolor="gray",
@@ -184,7 +184,6 @@ if st.button("🚀 Buscar Sustituto Ideal"):
 
     #Predicciones
     st.markdown("---")
-    # --- TABLA COMPARATIVA DE PREDICCIONES (TOP 5) ---
     perfil_lesionado = df[(df['Jugador'] == nombre_jugador) & (df['Temporada'] == temporada_seleccionada)].iloc[0]
     minutos_lesionado = perfil_lesionado['Minutos_Jugados_PP']
     st.markdown(f"### 📈 Proyección de Estadísticas (Rol de {minutos_lesionado} min)")
@@ -192,7 +191,7 @@ if st.button("🚀 Buscar Sustituto Ideal"):
     tabla_comparativa = resultados[['Jugador', 'PTS_Predichos', 'AST_Predichas', 'REB_Predichos']].copy()
     tabla_comparativa.columns = ['Candidato', 'Puntos (Pred)', 'Asistencias (Pred)', 'Rebotes (Pred)']
         
-    # Definimos qué columnas queremos resaltar (las de números)
+    # Definimos qué columnas queremos resaltar
     cols_a_resaltar = ['Puntos (Pred)', 'Asistencias (Pred)', 'Rebotes (Pred)']
 
     st.dataframe(

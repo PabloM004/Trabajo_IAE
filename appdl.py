@@ -1,3 +1,4 @@
+import plotly.graph_objects as go
 import streamlit as st
 import pandas as pd
 import tensorflow as tf
@@ -18,7 +19,8 @@ def load_data_big_data():
     columnas_necesarias = [
         'Jugador', 'Temporada', 'Posicion_Principal', 'Edad', 
         'Puntos_PP', 'Asistencias_PP', 'Rebotes_Totales_PP',
-        'Partidos_Jugados', 'Minutos_Jugados_PP', 'Rol'
+        'Partidos_Jugados', 'Minutos_Jugados_PP', 'Rol',
+        'Porcentaje_Tiros_Efectivo'
     ]
     
     df_dask = df_dask[columnas_necesarias]
@@ -55,7 +57,7 @@ def obtener_recomendacion_dl(nombre, temporada):
     input_dim = len(features)
     input_layer = Input(shape=(input_dim,))
     encoded = Dense(8, activation='relu')(input_layer)
-    encoded = Dense(4, activation='relu')(encoded) # Bottleneck
+    encoded = Dense(4, activation='relu')(encoded)
     decoded = Dense(8, activation='relu')(encoded)
     output_layer = Dense(input_dim, activation='sigmoid')(decoded)
     
@@ -73,7 +75,27 @@ def obtener_recomendacion_dl(nombre, temporada):
     similitudes = cosine_similarity([huellas_profundas[idx_jugador]], huellas_profundas)[0]
     
     df_pool['Similitud'] = similitudes
+
+    # 1. Datos del lesionado
+    perfil_lesionado = df[(df['Jugador'] == nombre) & (df['Temporada'] == temporada)].iloc[0] # Asegúrate de tener esta línea
+    minutos_lesionado = perfil_lesionado['Minutos_Jugados_PP']
+    eficiencia_lesionado = perfil_lesionado['Porcentaje_Tiros_Efectivo']
+    
+    # 2. Predicción de Puntos (con eFG%)
+    factor_punteria = df_pool['Porcentaje_Tiros_Efectivo'] / eficiencia_lesionado
+    df_pool['PTS_Predichos'] = (df_pool['Puntos_PP'] / df_pool['Minutos_Jugados_PP']) * minutos_lesionado * factor_punteria
+    
+    # 3. Predicción de Asistencias y Rebotes (por Minutos)
+    df_pool['AST_Predichas'] = (df_pool['Asistencias_PP'] / df_pool['Minutos_Jugados_PP']) * minutos_lesionado
+    df_pool['REB_Predichos'] = (df_pool['Rebotes_Totales_PP'] / df_pool['Minutos_Jugados_PP']) * minutos_lesionado
+    
+    # Redondeo
+    columnas_pred = ['PTS_Predichos', 'AST_Predichas', 'REB_Predichos']
+    df_pool[columnas_pred] = df_pool[columnas_pred].round(1)
+
     return df_pool.sort_values(by='Similitud', ascending=False).iloc[1:6]
+
+    
 
 # 5. EL BOTÓN QUE DISPARA LA TABLA
 if st.button("🚀 Buscar Sustituto Ideal"):
@@ -88,9 +110,103 @@ if st.button("🚀 Buscar Sustituto Ideal"):
         columnas_visibles = ['Jugador', 'Posicion_Principal', 'Puntos_PP', 'Asistencias_PP', 'Rebotes_Totales_PP', 'Rol']
         
         st.dataframe(resultados[columnas_visibles], use_container_width=True)
+
+
+
+
+    #Gráficos
+    st.markdown("---")
+    mejor_sustituto = resultados.iloc[0]
+    nombre_sustituto = mejor_sustituto['Jugador']
+
+    # 2. AQUÍ pones el título con el emoji
+    st.markdown(f"### 📊 Comparativa Visual: {nombre_jugador} vs {nombre_sustituto}")
+    # 1. Definimos los "Topes Reales" para que el gráfico sea proporcional
+    limites_personalizados = {
+        'Puntos_PP': 32.0,
+        'Asistencias_PP': 15.0,
+        'Rebotes_Totales_PP': 20.0,
+        'Minutos_Jugados_PP': 48.0,
+        'Edad': 40.0
+    }
+    categories = list(limites_personalizados.keys())
+
+    # 2. Extraer datos
+    perfil_lesionado = df[(df['Jugador'] == nombre_jugador) & (df['Temporada'] == temporada_seleccionada)].iloc[0]
+    mejor_sustituto = resultados.iloc[0]
+
+    # 3. Escalamos los valores para que "encajen" en el dibujo (de 0 a 1)
+    # Esto hace que 10 rebotes se vean igual de importantes que 24 minutos (ambos al 50% del eje)
+    val_original_radar = [perfil_lesionado[cat] / limites_personalizados[cat] for cat in categories]
+    val_sustituto_radar = [mejor_sustituto[cat] / limites_personalizados[cat] for cat in categories]
+
+    # 4. Creamos el gráfico
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatterpolar(
+        r=val_original_radar,
+        theta=categories,
+        fill='toself',
+        name=f"Lesionado: {nombre_jugador}",
+        hoverinfo="text",
+        # El texto del ratón SIEMPRE muestra el valor real original
+        text=[f"{perfil_lesionado[cat]} {cat}" for cat in categories],
+        line_color='#1f77b4'
+    ))
+
+    fig.add_trace(go.Scatterpolar(
+        r=val_sustituto_radar,
+        theta=categories,
+        fill='toself',
+        name=f"Sustituto: {mejor_sustituto['Jugador']}",
+        hoverinfo="text",
+        text=[f"{mejor_sustituto[cat]} {cat}" for cat in categories],
+        line_color='#ef553b'
+    ))
+
+    # 5. Configuración estética
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(
+                visible=True,
+                range=[0, 1], # El rango del dibujo es de 0 a 1 (0% a 100% del límite)
+                tickvals=[0.25, 0.5, 0.75, 1],
+                ticktext=['25%', '50%', '75%', 'Límite Máx.'],
+                gridcolor="gray",
+            )),
+        showlegend=True,
+        height=600,
+        title=dict(text="Comparación de Rendimiento (Escala Proporcional)", x=0.5)
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
+    #Predicciones
+    st.markdown("---")
+    # --- TABLA COMPARATIVA DE PREDICCIONES (TOP 5) ---
+    perfil_lesionado = df[(df['Jugador'] == nombre_jugador) & (df['Temporada'] == temporada_seleccionada)].iloc[0]
+    minutos_lesionado = perfil_lesionado['Minutos_Jugados_PP']
+    st.markdown(f"### 📈 Proyección de Estadísticas (Rol de {minutos_lesionado} min)")
         
+    tabla_comparativa = resultados[['Jugador', 'PTS_Predichos', 'AST_Predichas', 'REB_Predichos']].copy()
+    tabla_comparativa.columns = ['Candidato', 'Puntos (Pred)', 'Asistencias (Pred)', 'Rebotes (Pred)']
+        
+    # Definimos qué columnas queremos resaltar (las de números)
+    cols_a_resaltar = ['Puntos (Pred)', 'Asistencias (Pred)', 'Rebotes (Pred)']
+
+    st.dataframe(
+        tabla_comparativa.style.highlight_max(
+            axis=0, 
+            color='#2e7d32', 
+            subset=cols_a_resaltar
+        ), 
+        use_container_width=True,
+        hide_index=True
+    )
+    st.caption("Nota: Los puntos proyectados incluyen el ajuste por Porcentaje de Tiros Efectivo.")    
 
 #uv venv --python 3.12
 #.\.venv\Scripts\activate
 #uv sync
-#uv run streamlit run main.py
+#uv run streamlit run appdl.py

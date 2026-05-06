@@ -1,3 +1,5 @@
+¡¡¡EL ARCHIVO 'appp.py' ES INNECESARIO!!!
+
 OBJETIVO:
 El objetivo del proyecto es que, dado un jugador y un año concretos, se pueda proporcionar otro jugador con las misma habilidades en dicha temporada. 
 

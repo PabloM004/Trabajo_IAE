@@ -4,3 +4,4 @@ tensorflow
 dask[dataframe]
 scikit-learn
 plotly
+numpy

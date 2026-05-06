@@ -1,4 +1,6 @@
 streamlit
 pandas
+tensorflow
+dask[dataframe]
 scikit-learn
 plotly

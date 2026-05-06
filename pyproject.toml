@@ -1,0 +1,17 @@
+[project]
+name = "nba-replacement-tool"
+version = "0.1.0"
+description = "Herramienta de sustitución de jugadores NBA con Deep Learning y Big Data"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "streamlit",
+    "pandas",
+    "tensorflow",
+    "dask[dataframe]",
+    "scikit-learn",
+    "plotly",
+]
+
+[tool.uv]
+managed = true

@@ -89,7 +89,6 @@ if st.button("🚀 Buscar Sustituto Ideal"):
         
         st.dataframe(resultados[columnas_visibles], use_container_width=True)
         
-        st.success("✅ Análisis de Deep Learning completado con éxito.")
 
 #uv venv --python 3.12
 #.\.venv\Scripts\activate
